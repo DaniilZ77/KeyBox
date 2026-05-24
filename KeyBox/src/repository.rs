@@ -1,5 +1,6 @@
 use crate::{errors::AppError, models::Secret};
 use sled::Db;
+use std::env;
 use std::vec;
 
 pub struct RepositoryHelper {
@@ -8,7 +9,9 @@ pub struct RepositoryHelper {
 
 impl RepositoryHelper {
     pub fn new() -> sled::Result<RepositoryHelper> {
-        let db = sled::open("key_box_db")?;
+        let db_path =
+            env::var("KEYBOX_DB_PATH").unwrap_or_else(|_| "./data/key_box_db".to_string());
+        let db = sled::open(db_path)?;
         Ok(RepositoryHelper { db })
     }
 
