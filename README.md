@@ -4,8 +4,15 @@ Secure and simple storage for your API keys
 # Run
 
 ```bash
-$ cd KeyBox && docker compose up --build
+$ cd KeyBox
+$ export SECRET_KEY='...'
+$ export GRAFANA_ADMIN_PASSWORD='...'
+$ docker compose up --build
 ```
+
+Grafana is exposed on `http://localhost:3001` with user `admin`. The password
+comes from `GRAFANA_ADMIN_PASSWORD`. In GitHub Actions deployments set the
+`GRAFANA_ADMIN_PASSWORD` repository secret.
 
 # CLI
 

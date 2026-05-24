@@ -42,6 +42,8 @@ jobs:
       SSH_PORT: ${{ secrets.YC_VM_PORT || '22' }}
       SSH_HOST: ${{ secrets.YC_VM_HOST }}
       SSH_USER: ${{ secrets.YC_VM_USER }}
+      APP_SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -63,6 +65,14 @@ jobs:
           fi
           if [ -z "$SSH_KEY" ]; then
             echo "YC_VM_SSH_KEY secret is not set" >&2
+            exit 1
+          fi
+          if [ -z "$APP_SECRET_KEY" ]; then
+            echo "SECRET_KEY secret is not set" >&2
+            exit 1
+          fi
+          if [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+            echo "GRAFANA_ADMIN_PASSWORD secret is not set" >&2
             exit 1
           fi
 
@@ -93,16 +103,21 @@ jobs:
 
       - name: Restart services
         run: |
+          remote_env="DEPLOY_PATH_B64=$(printf '%s' "$DEPLOY_PATH" | base64 | tr -d '\n') APP_SECRET_KEY_B64=$(printf '%s' "$APP_SECRET_KEY" | base64 | tr -d '\n') GRAFANA_ADMIN_PASSWORD_B64=$(printf '%s' "$GRAFANA_ADMIN_PASSWORD" | base64 | tr -d '\n')"
           ssh -i ~/.ssh/yandex_vm_key -p "$SSH_PORT" \
             "$SSH_USER@$SSH_HOST" \
-            "DEPLOY_PATH='$DEPLOY_PATH' SECRET_KEY='${{ secrets.SECRET_KEY }}' bash -s" <<'EOF'
+            "$remote_env bash -s" <<'EOF'
           set -euo pipefail
+          DEPLOY_PATH="$(printf '%s' "$DEPLOY_PATH_B64" | base64 -d)"
+          APP_SECRET_KEY="$(printf '%s' "$APP_SECRET_KEY_B64" | base64 -d)"
+          GRAFANA_ADMIN_PASSWORD="$(printf '%s' "$GRAFANA_ADMIN_PASSWORD_B64" | base64 -d)"
 
           cd "$DEPLOY_PATH"
           tar -xzf keybox.tar.gz
           rm keybox.tar.gz
 
-          printf 'SECRET_KEY=%s\n' "$SECRET_KEY" > KeyBox/.env
+          printf 'SECRET_KEY=%s\n' "$APP_SECRET_KEY" > KeyBox/.env
+          printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$GRAFANA_ADMIN_PASSWORD" >> KeyBox/.env
           chmod 600 KeyBox/.env
 
           cd KeyBox
