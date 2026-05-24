@@ -45,6 +45,7 @@ services:
     image: grafana/grafana:latest
     container_name: keybox-grafana
     networks:
+      - app
       - monitoring
     ports:
       - "3001:3000"

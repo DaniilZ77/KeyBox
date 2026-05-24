@@ -40,17 +40,39 @@ jobs:
     env:
       DEPLOY_PATH: ${{ secrets.YC_DEPLOY_PATH || 'keybox' }}
       SSH_PORT: ${{ secrets.YC_VM_PORT || '22' }}
+      SSH_HOST: ${{ secrets.YC_VM_HOST }}
+      SSH_USER: ${{ secrets.YC_VM_USER }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.YC_VM_SSH_KEY }}
         run: |
+          set -euo pipefail
+
+          if [ -z "$SSH_HOST" ]; then
+            echo "YC_VM_HOST secret is not set" >&2
+            exit 1
+          fi
+          if [ -z "$SSH_USER" ]; then
+            echo "YC_VM_USER secret is not set" >&2
+            exit 1
+          fi
+          if [ -z "$SSH_KEY" ]; then
+            echo "YC_VM_SSH_KEY secret is not set" >&2
+            exit 1
+          fi
+
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.YC_VM_SSH_KEY }}" > ~/.ssh/yandex_vm_key
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/yandex_vm_key
           chmod 600 ~/.ssh/yandex_vm_key
-          ssh-keyscan -p "$SSH_PORT" "${{ secrets.YC_VM_HOST }}" >> ~/.ssh/known_hosts
+          if ! ssh-keyscan -T 15 -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts; then
+            echo "Failed to scan SSH host key for $SSH_HOST:$SSH_PORT" >&2
+            exit 1
+          fi
 
       - name: Package application
         run: |
@@ -63,16 +85,16 @@ jobs:
       - name: Upload application
         run: |
           ssh -i ~/.ssh/yandex_vm_key -p "$SSH_PORT" \
-            "${{ secrets.YC_VM_USER }}@${{ secrets.YC_VM_HOST }}" \
+            "$SSH_USER@$SSH_HOST" \
             "mkdir -p '$DEPLOY_PATH'"
           scp -i ~/.ssh/yandex_vm_key -P "$SSH_PORT" \
             "$RUNNER_TEMP/keybox.tar.gz" \
-            "${{ secrets.YC_VM_USER }}@${{ secrets.YC_VM_HOST }}:$DEPLOY_PATH/keybox.tar.gz"
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/keybox.tar.gz"
 
       - name: Restart services
         run: |
           ssh -i ~/.ssh/yandex_vm_key -p "$SSH_PORT" \
-            "${{ secrets.YC_VM_USER }}@${{ secrets.YC_VM_HOST }}" \
+            "$SSH_USER@$SSH_HOST" \
             "DEPLOY_PATH='$DEPLOY_PATH' SECRET_KEY='${{ secrets.SECRET_KEY }}' bash -s" <<'EOF'
           set -euo pipefail
 
