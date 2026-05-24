@@ -1,6 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
 use crate::errors::AppError;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Secret {
@@ -13,15 +13,20 @@ pub struct Secret {
 
 impl Secret {
     fn now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
 
     fn validate_key(key: &str) -> Result<(), AppError> {
         if key.len() < 3 {
-            return Err(AppError::ValidationError("key too short".to_string()))
+            return Err(AppError::ValidationError("key too short".to_string()));
         }
         if !key.chars().all(|c| c.is_alphanumeric()) {
-            return Err(AppError::ValidationError("key contains invalid characters".to_string()))
+            return Err(AppError::ValidationError(
+                "key contains invalid characters".to_string(),
+            ));
         }
         Ok(())
     }
@@ -53,19 +58,18 @@ impl Secret {
 pub struct CreateSecretReq {
     pub key: String,
     pub value: String,
-    pub groups: Vec<String>
+    pub groups: Vec<String>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct UpdateSecretReq {
     pub value: Option<String>,
-    pub groups: Option<Vec<String>>
+    pub groups: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Claims {
     pub exp: usize,
     pub group: String,
-    pub admin: bool
+    pub admin: bool,
 }
-

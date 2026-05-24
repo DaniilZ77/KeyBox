@@ -1,10 +1,13 @@
-use axum::{extract::{Path, Json, State, Extension}, http::StatusCode};
-use jsonwebtoken::DecodingKey;
-use metrics::counter;
-use crate::{encryption::Encryption, models::Claims};
-use crate::errors::{AppError};
+use crate::errors::AppError;
 use crate::models::{CreateSecretReq, Secret, UpdateSecretReq};
 use crate::repository::*;
+use crate::{encryption::Encryption, models::Claims};
+use axum::{
+    extract::{Extension, Json, Path, State},
+    http::StatusCode,
+};
+use jsonwebtoken::DecodingKey;
+use metrics::counter;
 use std::sync::Arc;
 use tracing::*;
 
@@ -29,16 +32,12 @@ impl AppState {
     }
 
     fn mask_secret(&self, item: &mut Secret) -> Result<(), AppError> {
-        item.value = self
-            .encryption
-            .encrypt(&item.value)?;
+        item.value = self.encryption.encrypt(&item.value)?;
         Ok(())
     }
 
     fn unmask_secret(&self, item: &mut Secret) -> Result<(), AppError> {
-        item.value = self
-            .encryption
-            .decrypt(&item.value)?;
+        item.value = self.encryption.decrypt(&item.value)?;
         Ok(())
     }
 }
@@ -48,12 +47,12 @@ pub async fn pong() -> &'static str {
 }
 
 pub async fn create_secret(
-    Extension(claims): Extension<Claims>, 
+    Extension(claims): Extension<Claims>,
     State(state): State<AppState>,
     Json(req): Json<CreateSecretReq>,
 ) -> Result<(StatusCode, Json<Secret>), AppError> {
     if !claims.admin {
-        return Err(AppError::NotEnoughRights())
+        return Err(AppError::NotEnoughRights());
     }
 
     let item = Secret::from(req)?;
@@ -61,10 +60,7 @@ pub async fn create_secret(
     let mut to_save = item.clone();
     state.mask_secret(&mut to_save)?;
 
-    state
-        .repository_helper
-        .save_secret(None, &to_save)
-        .await?;
+    state.repository_helper.save_secret(None, &to_save).await?;
 
     info!("Successfully created secret! {}", item.key);
 
@@ -80,24 +76,21 @@ pub async fn update_secret(
     Json(req): Json<UpdateSecretReq>,
 ) -> Result<(StatusCode, Json<Secret>), AppError> {
     if !claims.admin {
-        return Err(AppError::NotEnoughRights())
+        return Err(AppError::NotEnoughRights());
     }
 
     if req.value.is_none() && req.groups.is_none() {
-        return Err(AppError::ValidationError("nothing to update".to_string()))
+        return Err(AppError::ValidationError("nothing to update".to_string()));
     }
 
-    let old_item = state
-        .repository_helper
-        .get_secret(&key)
-        .await?;
-    
+    let old_item = state.repository_helper.get_secret(&key).await?;
+
     let mut new_item = old_item.clone();
     new_item.update(req);
 
     let mut to_save = new_item.clone();
     state.mask_secret(&mut to_save)?;
-    
+
     state
         .repository_helper
         .save_secret(Some(&old_item), &to_save)
@@ -112,10 +105,7 @@ pub async fn list_secrets(
     Extension(claims): Extension<Claims>,
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<Vec<Secret>>), AppError> {
-    let items = state
-        .repository_helper
-        .list_secrets()
-        .await?;
+    let items = state.repository_helper.list_secrets().await?;
 
     let mut result_items: Vec<Secret> = vec![];
     for mut item in items {
@@ -134,13 +124,10 @@ pub async fn delete_secret(
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
     if !claims.admin {
-        return Err(AppError::NotEnoughRights())
+        return Err(AppError::NotEnoughRights());
     }
 
-    state
-        .repository_helper
-        .del_secret(&key)
-        .await?;
+    state.repository_helper.del_secret(&key).await?;
 
     info!("Successfully deleted secret! {}", key);
 
@@ -152,13 +139,10 @@ pub async fn get_secret(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<(StatusCode, Json<Secret>), AppError> {
-    let mut item = state
-        .repository_helper
-        .get_secret(&key)
-        .await?;
+    let mut item = state.repository_helper.get_secret(&key).await?;
 
     if !claims.admin && !item.groups.contains(&claims.group) {
-        return Err(AppError::NotEnoughRights())
+        return Err(AppError::NotEnoughRights());
     }
     state.unmask_secret(&mut item)?;
 

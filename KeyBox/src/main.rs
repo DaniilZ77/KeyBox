@@ -1,17 +1,20 @@
+mod encryption;
+mod errors;
 mod handlers;
+mod middlewares;
 mod models;
 mod repository;
-mod errors;
-mod encryption;
-mod middlewares;
-use axum::{Router, middleware, routing::{delete, get, post, put}};
+use axum::{
+    Router, middleware,
+    routing::{delete, get, post, put},
+};
+use axum_prometheus::PrometheusMetricLayer;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use handlers::*;
 use middlewares::*;
 use std::env;
-use tracing_subscriber;
 use tracing::info;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use axum_prometheus::PrometheusMetricLayer;
+use tracing_subscriber;
 
 #[tokio::main]
 async fn main() {
@@ -26,8 +29,7 @@ async fn main() {
 
     let state = AppState::new(String::from_utf8(secret_key).unwrap());
 
-    let public_routes = Router::new()
-        .route("/ping", get(pong));
+    let public_routes = Router::new().route("/ping", get(pong));
 
     let protected_routes = Router::new()
         .route("/secrets", post(create_secret))
@@ -35,21 +37,23 @@ async fn main() {
         .route("/secrets/{key}", delete(delete_secret))
         .route("/secrets/{key}", get(get_secret))
         .route("/secrets/{key}", put(update_secret))
-        .layer(middleware::from_fn_with_state(state.clone(), jwt_middleware));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            jwt_middleware,
+        ));
 
     let app = protected_routes
         .merge(public_routes)
-        .route("/metrics", get(move || async move { metric_handle.render() }))
+        .route(
+            "/metrics",
+            get(move || async move { metric_handle.render() }),
+        )
         .layer(prometheus_layer)
         .layer(middleware::from_fn(request_id))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
 
     info!("Server running on 0.0.0.0:8080");
-    axum::serve(listener, app)
-        .await
-        .unwrap();
+    axum::serve(listener, app).await.unwrap();
 }

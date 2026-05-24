@@ -1,6 +1,6 @@
-use std::vec;
-use sled::Db;
 use crate::{errors::AppError, models::Secret};
+use sled::Db;
+use std::vec;
 
 pub struct RepositoryHelper {
     db: Db,
@@ -12,23 +12,21 @@ impl RepositoryHelper {
         Ok(RepositoryHelper { db })
     }
 
-    pub async fn save_secret(&self, old_item: Option<&Secret>, new_item: &Secret) -> Result<(), AppError> {
+    pub async fn save_secret(
+        &self,
+        old_item: Option<&Secret>,
+        new_item: &Secret,
+    ) -> Result<(), AppError> {
         let old = match old_item {
             Some(item) => Some(serde_json::to_vec(item)?),
             None => None,
         };
         let new = Some(serde_json::to_vec(new_item)?);
-        self
-            .db
-            .compare_and_swap(
-                Self::get_secret_db_key(&new_item.key), 
-                old,
-                new,
-            )?.map_err(|_| {
-                match old_item {
-                    Some(_) => AppError::Changed("secret".to_string()),
-                    None => AppError::AlreadyExists("secret".to_string())
-                }
+        self.db
+            .compare_and_swap(Self::get_secret_db_key(&new_item.key), old, new)?
+            .map_err(|_| match old_item {
+                Some(_) => AppError::Changed("secret".to_string()),
+                None => AppError::AlreadyExists("secret".to_string()),
             })?;
         Ok(())
     }
@@ -52,9 +50,9 @@ impl RepositoryHelper {
     pub async fn get_secret(&self, key: &str) -> Result<Secret, AppError> {
         match self.db.get(Self::get_secret_db_key(key))? {
             Some(value) => Ok(serde_json::from_slice(&value)?),
-            None => Err(AppError::NotFound("secret".to_string()))
+            None => Err(AppError::NotFound("secret".to_string())),
         }
-    }  
+    }
 
     fn get_secret_db_key(key: &str) -> String {
         format!("key_box/secrets/{}", key)
