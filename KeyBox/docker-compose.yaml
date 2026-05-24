@@ -2,8 +2,9 @@ services:
   keybox:
     build: .
     container_name: keybox
-    ports:
-      - "8001:8080"
+    networks:
+      - app
+      - monitoring
     environment:
       SECRET_KEY: ${SECRET_KEY}
     volumes:
@@ -17,11 +18,23 @@ services:
     depends_on:
       - prometheus
 
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: keybox-nginx
+    networks:
+      - app
+    ports:
+      - "8001:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - keybox
+
   prometheus:
     image: prom/prometheus:latest
     container_name: keybox-prometheus
-    ports:
-      - "9091:9090"
+    networks:
+      - monitoring
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -31,6 +44,8 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: keybox-grafana
+    networks:
+      - monitoring
     ports:
       - "3001:3000"
     volumes:
@@ -42,3 +57,8 @@ volumes:
   key-box-db:
   prometheus-data:
   grafana-data:
+
+networks:
+  app:
+  monitoring:
+    internal: true
