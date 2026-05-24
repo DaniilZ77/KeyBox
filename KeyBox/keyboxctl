@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+KEYBOX_URL="${KEYBOX_URL:-http://localhost:8001}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  keyboxctl token [--group GROUP] [--admin true|false] [--ttl SECONDS]
+  keyboxctl ping
+  keyboxctl list
+  keyboxctl get KEY
+  keyboxctl create KEY VALUE GROUP[,GROUP...]
+  keyboxctl update KEY [--value VALUE] [--groups GROUP[,GROUP...]]
+  keyboxctl delete KEY
+
+Environment:
+  KEYBOX_URL        API URL, default: http://localhost:8001
+  KEYBOX_TOKEN      JWT token for protected commands
+  KEYBOX_SECRET_KEY base64 encoded application secret, used by "token"
+
+Examples:
+  export KEYBOX_URL=http://127.0.0.1:8001
+  export KEYBOX_SECRET_KEY='...'
+  export KEYBOX_TOKEN="$(./keyboxctl token --group admin --admin true)"
+
+  ./keyboxctl create github_token ghp_xxx admin,dev
+  ./keyboxctl list
+  ./keyboxctl get github_token
+EOF
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing dependency: $1" >&2
+    exit 1
+  fi
+}
+
+base64_decode() {
+  if base64 --decode </dev/null >/dev/null 2>&1; then
+    base64 --decode
+  else
+    base64 -D
+  fi
+}
+
+base64_urlencode() {
+  base64 | tr -d '\n=' | tr '+/' '-_'
+}
+
+json_base64_urlencode() {
+  local json="$1"
+  printf '%s' "$json" | base64_urlencode
+}
+
+json_groups() {
+  local groups="${1:-}"
+  jq -cn --arg groups "$groups" '$groups | split(",") | map(select(length > 0))'
+}
+
+auth_header_args=()
+set_auth_header() {
+  if [[ -z "${KEYBOX_TOKEN:-}" ]]; then
+    echo "KEYBOX_TOKEN is required. Generate one with: keyboxctl token" >&2
+    exit 1
+  fi
+
+  auth_header_args=(-H "Authorization: Bearer ${KEYBOX_TOKEN}")
+}
+
+request() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+
+  set_auth_header
+
+  if [[ -n "$body" ]]; then
+    curl -fsS \
+      -X "$method" \
+      "${auth_header_args[@]}" \
+      -H "Content-Type: application/json" \
+      -d "$body" \
+      "${KEYBOX_URL}${path}"
+  else
+    curl -fsS \
+      -X "$method" \
+      "${auth_header_args[@]}" \
+      "${KEYBOX_URL}${path}"
+  fi
+}
+
+make_token() {
+  require_cmd jq
+  require_cmd openssl
+  require_cmd base64
+
+  local group="default"
+  local admin="false"
+  local ttl="86400"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --group)
+        group="${2:?--group requires a value}"
+        shift 2
+        ;;
+      --admin)
+        admin="${2:?--admin requires true or false}"
+        shift 2
+        ;;
+      --ttl)
+        ttl="${2:?--ttl requires seconds}"
+        shift 2
+        ;;
+      *)
+        echo "Unknown token option: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ "$admin" != "true" && "$admin" != "false" ]]; then
+    echo "--admin must be true or false" >&2
+    exit 1
+  fi
+
+  if [[ -z "${KEYBOX_SECRET_KEY:-}" ]]; then
+    echo "KEYBOX_SECRET_KEY is required to generate a token" >&2
+    exit 1
+  fi
+
+  local secret
+  secret="$(printf '%s' "$KEYBOX_SECRET_KEY" | base64_decode)"
+
+  local now exp header payload signing_input signature
+  now="$(date +%s)"
+  exp="$((now + ttl))"
+  header="$(json_base64_urlencode "$(jq -cn '{alg:"HS256",typ:"JWT"}')")"
+  payload="$(json_base64_urlencode "$(jq -cn --argjson exp "$exp" --arg group "$group" --argjson admin "$admin" \
+    '{exp:$exp,group:$group,admin:$admin}')")"
+  signing_input="${header}.${payload}"
+  signature="$(printf '%s' "$signing_input" | openssl dgst -sha256 -hmac "$secret" -binary | base64_urlencode)"
+
+  printf '%s.%s\n' "$signing_input" "$signature"
+}
+
+main() {
+  local command="${1:-}"
+  shift || true
+
+  case "$command" in
+    token)
+      make_token "$@"
+      ;;
+    ping)
+      curl -fsS "${KEYBOX_URL}/ping"
+      printf '\n'
+      ;;
+    list)
+      require_cmd jq
+      request GET /secrets | jq .
+      ;;
+    get)
+      require_cmd jq
+      local key="${1:?get requires KEY}"
+      request GET "/secrets/${key}" | jq .
+      ;;
+    create)
+      require_cmd jq
+      local key="${1:?create requires KEY}"
+      local value="${2:?create requires VALUE}"
+      local groups="${3:?create requires GROUP[,GROUP...]}"
+      local body
+      body="$(jq -cn --arg key "$key" --arg value "$value" --argjson groups "$(json_groups "$groups")" \
+        '{key:$key,value:$value,groups:$groups}')"
+      request POST /secrets "$body" | jq .
+      ;;
+    update)
+      require_cmd jq
+      local key="${1:?update requires KEY}"
+      shift
+      local value=""
+      local groups=""
+      local set_value="false"
+      local set_groups="false"
+
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --value)
+            value="${2:?--value requires a value}"
+            set_value="true"
+            shift 2
+            ;;
+          --groups)
+            groups="${2:?--groups requires GROUP[,GROUP...]}"
+            set_groups="true"
+            shift 2
+            ;;
+          *)
+            echo "Unknown update option: $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+
+      if [[ "$set_value" == "false" && "$set_groups" == "false" ]]; then
+        echo "update requires --value and/or --groups" >&2
+        exit 1
+      fi
+
+      local body
+      body="$(jq -cn \
+        --arg value "$value" \
+        --argjson set_value "$set_value" \
+        --argjson groups "$(json_groups "$groups")" \
+        --argjson set_groups "$set_groups" \
+        'if $set_value then .value = $value else . end
+         | if $set_groups then .groups = $groups else . end')"
+      request PUT "/secrets/${key}" "$body" | jq .
+      ;;
+    delete)
+      local key="${1:?delete requires KEY}"
+      request DELETE "/secrets/${key}"
+      printf 'deleted %s\n' "$key"
+      ;;
+    -h|--help|help|"")
+      usage
+      ;;
+    *)
+      echo "Unknown command: $command" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
